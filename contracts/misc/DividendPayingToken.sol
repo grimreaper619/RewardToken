@@ -21,7 +21,7 @@ contract DividendPayingToken is ERC20, Ownable, DividendPayingTokenInterface, Di
   using SafeMathUint for uint256;
   using SafeMathInt for int256;
 
-  address public constant BUSD = address(0xE879D7Ba401b0b8c3ec010001fb95dE120242500); //BUSD
+  address public constant ETH = address(0xE879D7Ba401b0b8c3ec010001fb95dE120242500); //ETH
 
 
   // With `magnitude`, we can properly distribute dividends even if the amount of received ether is small.
@@ -52,7 +52,7 @@ contract DividendPayingToken is ERC20, Ownable, DividendPayingTokenInterface, Di
   }
 
 
-  function distributeBUSDDividends(uint256 amount) public onlyOwner{
+  function distributeETHDividends(uint256 amount) public onlyOwner{
     require(totalSupply() > 0);
 
     if (amount > 0) {
@@ -78,7 +78,7 @@ contract DividendPayingToken is ERC20, Ownable, DividendPayingTokenInterface, Di
     if (_withdrawableDividend > 0) {
       withdrawnDividends[user] = withdrawnDividends[user].add(_withdrawableDividend);
       emit DividendWithdrawn(user, _withdrawableDividend);
-      bool success = IERC20(BUSD).transfer(user, _withdrawableDividend);
+      bool success = IERC20(ETH).transfer(user, _withdrawableDividend);
 
       if(!success) {
         withdrawnDividends[user] = withdrawnDividends[user].sub(_withdrawableDividend);
