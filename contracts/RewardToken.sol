@@ -8,7 +8,6 @@ import "./math/IterableMapping.sol";
 import '@uniswap/v2-core/contracts/interfaces/IUniswapV2Pair.sol';
 import '@uniswap/v2-core/contracts/interfaces/IUniswapV2Factory.sol';
 import '@uniswap/v2-periphery/contracts/interfaces/IUniswapV2Router02.sol';
-import "./misc/LotteryTracker.sol";
 
 
 contract RewardToken is ERC20, Ownable {
@@ -18,30 +17,24 @@ contract RewardToken is ERC20, Ownable {
     address public  uniswapV2Pair;
 
     bool private swapping;
-    bool private isAlreadyCalled;
-    bool private isLotteryActive;
 
     TOKENDividendTracker public dividendTracker;
-    LotteryTracker public lotteryTracker;
 
     address private constant deadWallet = address(0xdead);
 
-    address private constant ETH = address(0xE879D7Ba401b0b8c3ec010001fb95dE120242500); //ETH
+    address private constant ETH = address(0x77c21c770Db1156e271a3516F89380BA53D594FA); //ETH
 
-    uint256 public swapTokensAtAmount = 200000 * (10**18);
-    
-    mapping(address => bool) public _isBlacklisted;
+    uint256 public swapTokensAtAmount = 2 * 10**6 * (10**9);
 
-    uint8 public ETHRewardsFee = 2;
-    uint8 public liquidityFee = 4;
-    uint8 public marketingFee = 2;
-    uint8 public weekly = 1;
-    uint8 public monthly = 5;
-    uint8 public ultimate = 2;
-    uint16 public lotteryFee = weekly+monthly+ultimate;
-    uint16 public totalFees = ETHRewardsFee + liquidityFee + marketingFee + lotteryFee;
+    uint8 public ETHRewardsFee = 3;
+    uint8 public liquidityFee = 2;
+    uint8 public marketingFee = 5;
+    uint8 public burnFee = 2;
+    uint8 public charityFee = 2;
+    uint16 public totalFees = ETHRewardsFee + liquidityFee + marketingFee + burnFee + charityFee;
 
-    address public _marketingWalletAddress = address(0x0);
+    address payable public _marketingWallet = payable(address(0x123));
+    address payable public _charityWallet = payable(address(0x456));
 
 
     // use by default 300,000 gas to process auto-claiming dividends
@@ -63,8 +56,6 @@ contract RewardToken is ERC20, Ownable {
     event ExcludeMultipleAccountsFromFees(address[] accounts, bool isExcluded);
 
     event SetAutomatedMarketMakerPair(address indexed pair, bool indexed value);
-
-    event LiquidityWalletUpdated(address indexed newLiquidityWallet, address indexed oldLiquidityWallet);
 
     event GasForProcessingUpdated(uint256 indexed newValue, uint256 indexed oldValue);
 
@@ -88,18 +79,11 @@ contract RewardToken is ERC20, Ownable {
     	address indexed processor
     );
 
-    modifier onlyLottery{
-        require(msg.sender == address(lotteryTracker),"Only lottery contract");
-        _;
-    }
-
-    constructor() ERC20("TOKEN TOKEN", "JWLS") {
+    constructor() ERC20("TOKEN", "TKN") {
 
     	dividendTracker = new TOKENDividendTracker();
-        lotteryTracker = new LotteryTracker();
 
-
-    	IUniswapV2Router02 _uniswapV2Router = IUniswapV2Router02(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
+    	IUniswapV2Router02 _uniswapV2Router = IUniswapV2Router02(0x9Ac64Cc6e4415144C455BD8E4837Fea55603e5c3);
          // Create a uniswap pair for this new token
         address _uniswapV2Pair = IUniswapV2Factory(_uniswapV2Router.factory())
             .createPair(address(this), _uniswapV2Router.WETH());
@@ -115,28 +99,26 @@ contract RewardToken is ERC20, Ownable {
         dividendTracker.excludeFromDividends(owner());
         dividendTracker.excludeFromDividends(deadWallet);
         dividendTracker.excludeFromDividends(address(_uniswapV2Router));
-        dividendTracker.excludedFromDividends(address(lotteryTracker));
-
-        lotteryTracker.excludedFromWeekly(uniswapV2Pair);
-        lotteryTracker.excludedFromMonthly(uniswapV2Pair);
-        lotteryTracker.excludedFromUltimate(uniswapV2Pair);
 
         // exclude from paying fees or having max transaction amount
         excludeFromFees(owner(), true);
-        excludeFromFees(_marketingWalletAddress, true);
+        excludeFromFees(_marketingWallet, true);
         excludeFromFees(address(this), true);
 
         /*
             _mint is an internal function in ERC20.sol that is only called here,
             and CANNOT be called ever again
         */
-        _mint(owner(), 1000000000 * (10**18));
-        IERC20(ETH).approve(address(lotteryTracker),~uint256(0));
+        _mint(owner(), 10 * 10**9 * (10**9));
     }
 
     receive() external payable {
 
   	}
+
+    function decimals() public view virtual override returns (uint8) {
+        return 9;
+    }
 
     function updateDividendTracker(address newAddress) public onlyOwner {
         require(newAddress != address(dividendTracker), "TOKEN: The dividend tracker already has that address");
@@ -180,49 +162,46 @@ contract RewardToken is ERC20, Ownable {
     }
 
     function setMarketingWallet(address payable wallet) external onlyOwner{
-        _marketingWalletAddress = wallet;
+        _marketingWallet = wallet;
+    }
+
+    function setCharityWallet(address payable wallet) external onlyOwner{
+        _charityWallet = wallet;
     }
 
     function setETHRewardsFee(uint8 value) external onlyOwner{
         ETHRewardsFee = value;
-        totalFees = ETHRewardsFee + liquidityFee + marketingFee + lotteryFee;
+        totalFees = ETHRewardsFee + liquidityFee + marketingFee + burnFee + charityFee;
     }
 
-    function setLiquiditFee(uint8 value) external onlyOwner{
+    function setLiquidityFee(uint8 value) external onlyOwner{
         liquidityFee = value;
-        totalFees = ETHRewardsFee + liquidityFee + marketingFee + lotteryFee;
+        totalFees = ETHRewardsFee + liquidityFee + marketingFee + burnFee + charityFee;
     }
 
     function setMarketingFee(uint8 value) external onlyOwner{
         marketingFee = value;
-        totalFees = ETHRewardsFee + liquidityFee + marketingFee + lotteryFee;
+        totalFees = ETHRewardsFee + liquidityFee + marketingFee + burnFee + charityFee;
 
     }
 
-    function setLotteryState(bool value) external onlyOwner {
-        isLotteryActive = value;
-    }
-
-    function setLotteryFee(uint8 _weekly, uint8 _monthly, uint8 _ultimate) external onlyOwner{
-        weekly = _weekly;
-        monthly = _monthly;
-        ultimate = _ultimate;
-        lotteryFee = weekly + monthly + ultimate;
-        totalFees = ETHRewardsFee + liquidityFee + marketingFee + lotteryFee;
+    function setBurnFee(uint8 value) external onlyOwner{
+        burnFee = value;
+        totalFees = ETHRewardsFee + liquidityFee + marketingFee + burnFee + charityFee;
 
     }
 
+    function setCharityFee(uint8 value) external onlyOwner{
+        charityFee = value;
+        totalFees = ETHRewardsFee + liquidityFee + marketingFee + burnFee + charityFee;
+
+    }
 
     function setAutomatedMarketMakerPair(address pair, bool value) public onlyOwner {
         require(pair != uniswapV2Pair, "TOKEN: The PancakeSwap pair cannot be removed from automatedMarketMakerPairs");
 
         _setAutomatedMarketMakerPair(pair, value);
     }
-    
-    function blacklistAddress(address account, bool value) external onlyOwner{
-        _isBlacklisted[account] = value;
-    }
-
 
     function _setAutomatedMarketMakerPair(address pair, bool value) private {
         require(automatedMarketMakerPairs[pair] != value, "TOKEN: Automated market maker pair is already set to that value");
@@ -269,31 +248,6 @@ contract RewardToken is ERC20, Ownable {
 
 	function excludeFromDividends(address account) external onlyOwner{
 	    dividendTracker.excludeFromDividends(account);
-	}
-
-    function excludeFromWeekly(address account) external onlyOwner{
-	    lotteryTracker.excludeFromWeekly(account);
-	}
-
-    function excludeFromMonthly(address account) external onlyOwner{
-	    lotteryTracker.excludeFromMonthly(account);
-	}
-
-    function excludeFromUltimate(address account) external onlyOwner{
-	    lotteryTracker.excludeFromUltimate(account);
-	}
-	
-	function setMinValues(uint256 _weekly, uint256 _monthly, uint256 _ultimate) external onlyOwner {
-	    lotteryTracker.setMinValues(_weekly,_monthly,_ultimate);
-	}
-
-    function pickUltimateWinner() external onlyOwner{
-	    if(!isAlreadyCalled){ 
-                lotteryTracker.getRandomNumber();
-                isAlreadyCalled = true;
-            }else{
-                try lotteryTracker.pickUltimateWinner() {isAlreadyCalled = false;} catch {}
-            }
 	}
 
     function getAccountDividendsInfo(address account)
@@ -347,7 +301,6 @@ contract RewardToken is ERC20, Ownable {
     ) internal override {
         require(from != address(0), "ERC20: transfer from the zero address");
         require(to != address(0), "ERC20: transfer to the zero address");
-        require(!_isBlacklisted[from] && !_isBlacklisted[to], 'Blacklisted address');
 
         if(amount == 0) {
             super._transfer(from, to, 0);
@@ -366,14 +319,19 @@ contract RewardToken is ERC20, Ownable {
         ) {
             swapping = true;
 
-            uint256 marketingTokens = contractTokenBalance.mul(marketingFee).div(totalFees);
-            swapAndSendToFee(marketingTokens);
+            contractTokenBalance = swapTokensAtAmount;
+
+            uint256 burnTokens = contractTokenBalance.mul(burnFee).div(totalFees);
+            super._transfer(address(this),deadWallet,burnTokens);
+
+            uint256 feeTokens = contractTokenBalance.mul(marketingFee+charityFee).div(totalFees);
+            swapAndSendToFee(feeTokens);
 
             uint256 swapTokens = contractTokenBalance.mul(liquidityFee).div(totalFees);
             swapAndLiquify(swapTokens);
 
-            uint256 sellTokens = balanceOf(address(this));
-            swapAndSendDividendsAndLottery(sellTokens);
+            uint256 sellTokens = contractTokenBalance.mul(ETHRewardsFee).div(totalFees);
+            swapAndSendDividends(sellTokens);
 
             swapping = false;
         }
@@ -399,31 +357,6 @@ contract RewardToken is ERC20, Ownable {
         try dividendTracker.setBalance(payable(from), balanceOf(from)) {} catch {}
         try dividendTracker.setBalance(payable(to), balanceOf(to)) {} catch {}
 
-        try lotteryTracker.setAccount(payable(from), balanceOf(from), true) {} catch {}
-        try lotteryTracker.setAccount(payable(to), balanceOf(to), false) {} catch {}
-
-        if(isLotteryActive){
-            if(block.timestamp >= lotteryTracker.lastWeeklyDistributed() + 7 days){
-                if(!isAlreadyCalled){
-                    lotteryTracker.getRandomNumber();
-                    isAlreadyCalled = true;
-                }else{
-                    try lotteryTracker.pickWeeklyWinners() {isAlreadyCalled = false;} catch {}
-                }
-            
-            }
-
-            if(block.timestamp >= lotteryTracker.lastMonthlyDistributed() + 30 days){
-                if(!isAlreadyCalled){
-                    lotteryTracker.getRandomNumber();
-                    isAlreadyCalled = true;
-                }else{
-                    try lotteryTracker.pickMonthlyWinners() {isAlreadyCalled = false;} catch {}
-                }
-            
-            }
-        }
-
         if(!swapping) {
 	    	uint256 gas = gasForProcessing;
 
@@ -438,11 +371,14 @@ contract RewardToken is ERC20, Ownable {
 
     function swapAndSendToFee(uint256 tokens) private  {
 
-        uint256 initialETHBalance = IERC20(ETH).balanceOf(address(this));
+        uint256 initialBalance = address(this).balance;
+        swapTokensForBNB(tokens);
+        uint256 newBalance = address(this).balance.sub(initialBalance);
 
-        swapTokensForETH(tokens);
-        uint256 newBalance = (IERC20(ETH).balanceOf(address(this))).sub(initialETHBalance);
-        IERC20(ETH).transfer(_marketingWalletAddress, newBalance);
+        uint256 forMarketing = newBalance.mul(marketingFee).div(marketingFee+charityFee);
+
+        _marketingWallet.transfer(forMarketing);
+        _charityWallet.transfer(newBalance - forMarketing);
     }
 
     function swapAndLiquify(uint256 tokens) private {
@@ -457,7 +393,7 @@ contract RewardToken is ERC20, Ownable {
         uint256 initialBalance = address(this).balance;
 
         // swap tokens for ETH
-        swapTokensForEth(half); // <- this breaks the ETH -> HATE swap when swap+liquify is triggered
+        swapTokensForBNB(half); // <- this breaks the ETH -> HATE swap when swap+liquify is triggered
 
         // how much ETH did we just swap into?
         uint256 newBalance = address(this).balance.sub(initialBalance);
@@ -469,7 +405,7 @@ contract RewardToken is ERC20, Ownable {
     }
 
 
-    function swapTokensForEth(uint256 tokenAmount) private {
+    function swapTokensForBNB(uint256 tokenAmount) private {
 
 
         // generate the uniswap pair path of token -> weth
@@ -526,20 +462,15 @@ contract RewardToken is ERC20, Ownable {
 
     }
 
-    function swapAndSendDividendsAndLottery(uint256 tokens) private{
+    function swapAndSendDividends(uint256 tokens) private{
         swapTokensForETH(tokens);
         uint256 dividends = IERC20(ETH).balanceOf(address(this));
-        uint256 lottery = dividends.mul(lotteryFee).div(lotteryFee + ETHRewardsFee);
-        dividends = dividends.sub(lottery);
 
         bool success = IERC20(ETH).transfer(address(dividendTracker), dividends);
-
         if (success) {
             dividendTracker.distributeETHDividends(dividends);
             emit SendDividends(tokens, dividends);
         }
-
-        lotteryTracker.setLottery(IERC20(ETH).balanceOf(address(this)));
 
     }
 }
@@ -566,7 +497,7 @@ contract TOKENDividendTracker is Ownable, DividendPayingToken {
 
     constructor() DividendPayingToken("TOKEN_Dividen_Tracker", "TOKEN_Dividend_Tracker") {
     	claimWait = 3600;
-        minimumTokenBalanceForDividends = 20000 * (10**18); //must hold 20000+ tokens
+        minimumTokenBalanceForDividends = 20000 * (10**9); //must hold 20000+ tokens
     }
 
     function _transfer(address, address, uint256) internal pure override {
